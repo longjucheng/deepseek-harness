@@ -11,7 +11,7 @@ index e1538a5dfcf2225da9dc3ec622576564ee7c8530..abb8f990d680ee247708ca774a467fc5
                                  type: "toolcall_delta",
                                  contentIndex: index,
 diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
-index 6bc6312906ec3d75f31d190994d21c87f1d0767d..7ff68fb60c3c1d9e3e7d2d2df8d4619593a67335 100644
+index 6bc6312906ec3d75f31d190994d21c87f1d0767d..1cd5a591c1a315f13fa293b92a3b7bcb56dec09b 100644
 --- a/dist/api/bedrock-converse-stream.js
 +++ b/dist/api/bedrock-converse-stream.js
 @@ -453,7 +453,6 @@ function handleContentBlockDelta(event, blocks, output, stream) {
@@ -22,6 +22,49 @@ index 6bc6312906ec3d75f31d190994d21c87f1d0767d..7ff68fb60c3c1d9e3e7d2d2df8d46195
          stream.push({ type: "toolcall_delta", contentIndex: index, delta: delta.toolUse.input || "", partial: output });
      }
      else if (delta?.reasoningContent) {
+@@ -632,6 +631,22 @@ function isAnthropicClaudeModel(model) {
+         name.includes("anthropic/claude") ||
+         name.includes("claude"));
+ }
++/**
++ * Check if the model is an OpenAI model on Bedrock.
++ * Checks both model ID and model name to support application inference profiles
++ * whose ARNs don't contain the model name.
++ */
++function isOpenAIModel(model) {
++    const candidates = getModelMatchCandidates(model.id, model.name);
++    return candidates.some((s) => s.includes("openai.") || s.includes("openai/") || s.includes("gpt-"));
++}
++/**
++ * Check if the model is one of OpenAI's open-weight models on Bedrock, which
++ * are invoked through the Chat Completions request body rather than Responses.
++ */
++function isOpenAIOpenWeightModel(model) {
++    return getModelMatchCandidates(model.id, model.name).some((s) => s.includes("gpt-oss"));
++}
+ /**
+  * Check if the model supports prompt caching.
+  * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models, Claude 5 models
+@@ -1028,6 +1043,19 @@ function buildAdditionalModelRequestFields(model, options) {
+         }
+         return result;
+     }
++    if (isOpenAIModel(model)) {
++        // OpenAI models on Bedrock reject the Claude fields (thinking,
++        // output_config) as unknown parameters, and the two families disagree
++        // with each other: the open-weight gpt-oss models take the Chat
++        // Completions request body, whose effort field is the flat
++        // reasoning_effort, while the hosted GPT-5.x profiles take the Responses
++        // reasoning object and refuse reasoning_effort. Their effort vocabulary
++        // is also narrower than Claude's — GPT-5.6 refuses "minimal" with
++        // unsupported_value — so the wire value comes from the model's
++        // thinkingLevelMap whenever it declares one.
++        const effort = mapThinkingLevelToEffort(model, options.reasoning);
++        return isOpenAIOpenWeightModel(model) ? { reasoning_effort: effort } : { reasoning: { effort } };
++    }
+     return undefined;
+ }
+ function createImageBlock(mimeType, data) {
 diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
 index 67f9341a6f7d855dce25054fd48cd9077e8e04a1..afdb5c2c873abb72ca8011b7e3f06a230dbe3e8a 100644
 --- a/dist/api/mistral-conversations.js
